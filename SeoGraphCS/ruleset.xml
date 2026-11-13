@@ -32,4 +32,5 @@
 	</rule>
 
 	<rule ref="SeoGraphCS.Architecture.InvariantBoundaries"/>
+	<rule ref="SeoGraphCS.Conventions.AlphabetizedUseStatements"/>
 </ruleset>
