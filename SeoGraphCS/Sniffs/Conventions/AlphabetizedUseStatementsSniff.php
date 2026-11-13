@@ -58,6 +58,12 @@ class AlphabetizedUseStatementsSniff implements Sniff {
 
 		$tokens = $phpcsFile->getTokens();
 
+		// Closure variable captures are `use (...)`, never `use \Name\Path`.
+		$next = $phpcsFile->findNext( [ \T_WHITESPACE, \T_COMMENT, \T_DOC_COMMENT ], $stackPtr + 1, null, true );
+		if ( false !== $next && '(' === $tokens[ $next ]['content'] ) {
+			return;
+		}
+
 		// Trait use statements live inside a class, interface, or trait body;
 		// only namespace-level imports are subject to the convention.
 		if ( $this->is_inside_type_body( $tokens, $stackPtr ) ) {
@@ -285,8 +291,13 @@ class AlphabetizedUseStatementsSniff implements Sniff {
 	 * @return bool
 	 */
 	private function is_inside_type_body( array $tokens, int $stackPtr ): bool {
-		foreach ( $tokens[ $stackPtr ]['conditions'] as $condition ) {
-			if ( in_array( $tokens[ $condition ]['code'], [ \T_CLASS, \T_INTERFACE, \T_TRAIT ], true ) ) {
+		foreach ( $tokens[ $stackPtr ]['conditions'] ?? [] as $condition ) {
+			// Some PHPCS builds store non-pointer values in the condition
+			// stack; only integer token pointers can be dereferenced.
+			if ( ! is_int( $condition ) || ! isset( $tokens[ $condition ] ) ) {
+				continue;
+			}
+			if ( in_array( $tokens[ $condition ]['code'], [ \T_CLASS, \T_INTERFACE, \T_TRAIT, \T_FUNCTION ], true ) ) {
 				return true;
 			}
 		}

@@ -55,7 +55,16 @@ final class AlphabetizedUseStatementsSniffTest extends TestCase {
 	public function test_trait_use_statements_are_ignored(): void {
 		file_put_contents(
 			$this->fixture_root . '/src/trait-use.php',
-			"<?php\n\nnamespace SeoGraph;\n\nuse SeoGraph\\Zeta\\Zeta_Trait;\nuse SeoGraph\\Alpha\\Alpha_Trait;\n\nclass Host {\n\tuse Zeta_Trait, Alpha_Trait;\n}\n"
+			"<?php\n\nnamespace SeoGraph;\n\nuse SeoGraph\\Alpha\\Alpha_Trait;\nuse SeoGraph\\Zeta\\Zeta_Trait;\n\nclass Host {\n\tuse Zeta_Trait, Alpha_Trait;\n}\n"
+		);
+
+		$this->assertSame( [], $this->convention_sources( 'src' ) );
+	}
+
+	public function test_closure_variable_captures_are_not_imports(): void {
+		file_put_contents(
+			$this->fixture_root . '/src/closure-capture.php',
+			"<?php\n\nnamespace SeoGraph;\n\nuse SeoGraph\\Alpha\\Alpha_Helper;\nuse SeoGraph\\Zeta\\Zeta_Helper;\n\nfunction factory() {\n\t\$name = 'x';\n\treturn function ( string \$input ) use ( \$name, \$input ) : string {\n\t\treturn \$name . \$input;\n\t};\n}\n"
 		);
 
 		$this->assertSame( [], $this->convention_sources( 'src' ) );
