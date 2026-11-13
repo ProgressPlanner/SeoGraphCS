@@ -144,9 +144,13 @@ final class AlphabetizedUseStatementsSniff implements Sniff {
 			if ( \T_USE !== $tokens[ $i ]['code'] ) {
 				continue;
 			}
-			// `use function` / `use const` are outside the convention.
 			$next = $phpcsFile->findNext( [ \T_WHITESPACE, \T_COMMENT, \T_DOC_COMMENT ], $i + 1, null, true );
 			$keyword = false !== $next ? $tokens[ $next ]['content'] : '';
+			// `use (` is a closure variable capture, never a namespace import.
+			if ( '(' === $keyword ) {
+				continue;
+			}
+			// `use function` / `use const` are outside the convention.
 			if ( 'function' === $keyword || 'const' === $keyword ) {
 				continue;
 			}

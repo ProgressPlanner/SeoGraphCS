@@ -82,6 +82,15 @@ final class AlphabetizedUseStatementsSniffTest extends TestCase {
 		$this->assertSame( [], $this->convention_sources( 'src' ) );
 	}
 
+	public function test_closure_captures_inside_methods_are_not_imports(): void {
+		file_put_contents(
+			$this->fixture_root . '/src/method-capture.php',
+			"<?php\n\nnamespace SeoGraph;\n\nuse SeoGraph\\Alpha\\Alpha_Helper;\nuse SeoGraph\\Zeta\\Zeta_Helper;\n\nclass Host {\n\tpublic function make(): callable {\n\t\t\$count = 0;\n\t\treturn function () use ( &\$count ): array {\n\t\t\t++\$count;\n\t\t\treturn [];\n\t\t};\n\t}\n}\n"
+		);
+
+		$this->assertSame( [], $this->convention_sources( 'src' ) );
+	}
+
 	public function test_function_and_const_imports_are_outside_the_convention(): void {
 		file_put_contents(
 			$this->fixture_root . '/src/function-imports.php',
