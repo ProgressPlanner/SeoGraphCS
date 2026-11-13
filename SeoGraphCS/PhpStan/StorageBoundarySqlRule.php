@@ -14,10 +14,10 @@ use PhpParser\Node\Stmt\Global_;
 use PhpParser\Node\Stmt\Function_;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
-use PHPStan\Analyser\Error;
 use PHPStan\Analyser\Scope;
 use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Rules\Rule;
+use PHPStan\Rules\RuleErrorBuilder;
 
 /**
  * Statement-level companion to {@see StorageBoundarySqlExtension}.
@@ -96,7 +96,7 @@ final class StorageBoundarySqlRule implements Rule {
 	/**
 	 * {@inheritdoc}
 	 *
-	 * @return Error[]
+	 * @return \PHPStan\Rules\RuleError[]
 	 */
 	public function processNode( Node $node, Scope $scope ): array {
 		// Plain method names surface as a string or an Identifier depending on
@@ -138,18 +138,11 @@ final class StorageBoundarySqlRule implements Rule {
 		}
 
 		return [
-			new Error(
-				'Direct SQL through the wpdb global (or an alias of it) is restricted to the storage layer boundary.',
-				$scope->getFile(),
-				$node->getLine(),
-				true,
-				null,
-				null,
-				null,
-				null,
-				null,
-				'seograph.directSqlOutsideStorage'
-			),
+			RuleErrorBuilder::message(
+				'Direct SQL through the wpdb global (or an alias of it) is restricted to the storage layer boundary.'
+			)
+				->identifier( 'seograph.directSqlOutsideStorage' )
+				->build(),
 		];
 	}
 
