@@ -130,17 +130,14 @@ class InvariantBoundariesSniff implements Sniff {
 	];
 
 	/**
-	 * Document-head output markers that belong in presenters.
+	 * Characters that may legally precede a real HTML tag start inside a shape.
+	 * Regex delimiters, identifier characters and operators cannot introduce a
+	 * tag, so inspection patterns such as /<title> or #<svg stay exempt while
+	 * string starts and markup boundaries do not.
 	 *
-	 * @var array<int, string>
+	 * @var string
 	 */
-	private const HEAD_OUTPUT_MARKERS = [
-		'<title',
-		'<meta name=',
-		'<meta property=',
-		'<link rel=',
-		'application/ld+json',
-	];
+	private const TAG_BOUNDARY_PRECEDING = " \t\n\r<>()[]{}='\"!-:=;";
 
 	/**
 	 * Runtime directories that the architecture sniff should not police.
@@ -205,8 +202,8 @@ class InvariantBoundariesSniff implements Sniff {
 				$this->check_wp_filesystem_method_call( $phpcs_file, $tokens, (int) $ptr, $wp_filesystem_variables );
 			}
 
-			if ( $this->is_head_output_statement( $tokens, (int) $ptr ) ) {
-				$this->check_head_output( $phpcs_file, $tokens, (int) $ptr, $filename );
+			if ( $this->is_string_statement( $tokens, (int) $ptr ) ) {
+				$this->check_head_template_construction( $phpcs_file, $tokens, (int) $ptr, $filename );
 			}
 		}//end foreach
 	}
@@ -559,7 +556,16 @@ class InvariantBoundariesSniff implements Sniff {
 	}
 
 	/**
-	 * Checks document-head markup outside presenters.
+	 * Checks document-head tag construction outside presenters.
+	 *
+	 * Raw SEO head-tag templates belong in presenters, whatever the resulting
+	 * string is later used for — output, comparison data or search data. The
+	 * check reconstructs the expression-local template shape (locally known
+	 * literal fragments plus opaque slots for runtime values) and matches the
+	 * protected tag families against it, so attribute order, whitespace, case
+	 * and quoting cannot hide a template. It is intentionally bounded: it
+	 * recognizes statically identifiable shapes and does not evaluate arbitrary
+	 * functions or reconstruct runtime-computed HTML.
 	 *
 	 * @param File              $phpcs_file The PHPCS file.
 	 * @param array<int, array> $tokens     PHPCS tokens.
@@ -568,43 +574,342 @@ class InvariantBoundariesSniff implements Sniff {
 	 *
 	 * @return void
 	 */
-	private function check_head_output( File $phpcs_file, array $tokens, int $ptr, string $filename ): void {
+	private function check_head_template_construction( File $phpcs_file, array $tokens, int $ptr, string $filename ): void {
 		if ( $this->is_presenter_path( $filename ) ) {
 			return;
 		}
 
-		$end = $this->statement_end( $tokens, $ptr );
+		$statement_start = $this->statement_start( $tokens, $ptr );
+		$end             = $this->statement_end( $tokens, $statement_start );
 
-		for ( $i = $ptr; $i <= $end; $i++ ) {
-			if ( ! in_array( $tokens[ $i ]['code'], [ T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE ], true ) ) {
-				continue;
-			}
+		$shape = $this->statement_shape( $tokens, $statement_start, $end );
 
-			if ( $this->is_allowed_non_presenter_head_string( $filename, $tokens[ $i ]['content'] ) ) {
-				continue;
-			}
+		if ( $shape === '' ) {
+			return;
+		}
 
-			if ( $this->contains_head_output_marker( $tokens[ $i ]['content'] ) ) {
-				$phpcs_file->addError(
-					'Document-head markup must be emitted by a presenter.',
-					$i,
-					'HeadOutputOutsidePresenter'
-				);
-				return;
-			}
+		// The documented standalone sitemap/XSL full-document rendering allowance.
+		if ( str_contains( $filename, '/src/sitemaps/' ) && str_contains( $shape, '<html><head><title>' ) ) {
+			return;
+		}
+
+		foreach ( $this->protected_tag_families( $shape ) as $family ) {
+			$phpcs_file->addError(
+				sprintf(
+					'Raw %1$s tag templates belong to presenters; build them only in src/presenters/ (spec §3.2).',
+					$family
+				),
+				$ptr,
+				'HeadOutputOutsidePresenter'
+			);
+			break;
 		}
 	}
 
 	/**
-	 * Returns whether a token starts a statement that may emit head output.
+	 * Returns whether a token can start a statement that carries string content.
 	 *
 	 * @param array<int, array> $tokens PHPCS tokens.
 	 * @param int               $ptr    Token pointer.
 	 *
 	 * @return bool
 	 */
-	private function is_head_output_statement( array $tokens, int $ptr ): bool {
-		return in_array( $tokens[ $ptr ]['code'], [ T_ECHO, T_PRINT, T_RETURN ], true );
+	private function is_string_statement( array $tokens, int $ptr ): bool {
+		return in_array(
+			$tokens[ $ptr ]['code'],
+			[
+				T_VARIABLE,
+				T_STRING,
+				T_NAME_FULLY_QUALIFIED,
+				T_NAME_QUALIFIED,
+				T_NAME_RELATIVE,
+				T_CONSTANT_ENCAPSED_STRING,
+				T_ECHO,
+				T_PRINT,
+				T_RETURN,
+				T_NEW,
+				T_LNUMBER,
+				T_CONST,
+			],
+			true
+		);
+	}
+
+	/**
+	 * Walks back to the first token of the statement that contains the pointer.
+	 *
+	 * @param array<int, array> $tokens PHPCS tokens.
+	 * @param int               $ptr    Token pointer.
+	 *
+	 * @return int
+	 */
+	private function statement_start( array $tokens, int $ptr ): int {
+		for ( $i = $ptr; $i >= 0; $i-- ) {
+			$content = $tokens[ $i ]['content'];
+
+			if ( in_array( $content, [ ';', '{', '}', '(', ')', '[', '?>' ], true ) ) {
+				return $i + 1;
+			}
+
+			if ( $this->is_empty_token( $tokens[ $i ]['code'] ) ) {
+				continue;
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Rebuilds a statement's template shape: lowercase literal fragments with
+	 * quotes removed, whitespace collapsed, and an opaque `<?>` slot wherever a
+	 * runtime value or expression boundary sits between fragments. Comments and
+	 * whitespace never contribute to the shape.
+	 *
+	 * @param array<int, array> $tokens PHPCS tokens.
+	 * @param int               $start  Statement start pointer.
+	 * @param int               $end    Statement end pointer.
+	 *
+	 * @return string
+	 */
+	private function statement_shape( array $tokens, int $start, int $end ): string {
+		$shape = '';
+
+		for ( $i = $start; $i <= $end; $i++ ) {
+			$code = $tokens[ $i ]['code'];
+
+			if ( T_CONSTANT_ENCAPSED_STRING === $code ) {
+				$fragment = $this->normalize_fragment( $this->strip_string_quotes( $tokens[ $i ]['content'] ) );
+
+				if ( $fragment !== '' ) {
+					$shape .= $fragment;
+				}
+
+				continue;
+			}
+
+			if ( T_ENCAPSED_AND_WHITESPACE === $code ) {
+				// Interpolated values inside a double-quoted string are opaque slots.
+				if ( $shape !== '' && $this->fragment_seen_before( $tokens, $i ) ) {
+					$shape .= '<??>';
+				}
+
+				continue;
+			}
+
+			if ( $this->is_empty_token( $code ) ) {
+				continue;
+			}
+
+			// Any other token between string fragments is an expression boundary;
+			// it separates fragments with a slot so two adjacent tags cannot
+			// merge into one false-positive shape.
+			if ( $shape !== '' && $this->pending_fragment_follows( $tokens, $i, $end ) ) {
+				$shape .= '<??>';
+			}
+		}
+
+		return $shape;
+	}
+
+	/**
+	 * Returns whether an interpolated value is inside a quoted string, i.e.
+	 * directly preceded by a string fragment.
+	 *
+	 * @param array<int, array> $tokens PHPCS tokens.
+	 * @param int               $ptr    Encapsed pointer.
+	 *
+	 * @return bool
+	 */
+	private function fragment_seen_before( array $tokens, int $ptr ): bool {
+		for ( $i = $ptr - 1; $i >= 0; $i-- ) {
+			$code = $tokens[ $i ]['code'];
+
+			if ( $this->is_empty_token( $code ) ) {
+				continue;
+			}
+
+			return T_CONSTANT_ENCAPSED_STRING === $code || T_ENCAPSED_AND_WHITESPACE === $code;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Returns whether a later string fragment follows this boundary token within
+	 * the same statement, so the boundary separates fragments rather than
+	 * trailing the shape.
+	 *
+	 * @param array<int, array> $tokens PHPCS tokens.
+	 * @param int               $ptr    Boundary token pointer.
+	 * @param int               $end    Statement end pointer.
+	 *
+	 * @return bool
+	 */
+	private function pending_fragment_follows( array $tokens, int $ptr, int $end ): bool {
+		for ( $i = $ptr + 1; $i <= $end; $i++ ) {
+			if ( in_array( $tokens[ $i ]['code'], [ T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE ], true ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Returns the protected head-tag families identified in a shape.
+	 *
+	 * A family matches when the tag start sits at a real tag boundary, its
+	 * defining attribute is present, and the tag region carries a closing angle
+	 * bracket or an opaque slot — the distinction that keeps a raw tag template
+	 * (including one whose value is concatenated from runtime data) flagged
+	 * while a partial search needle (no closing bracket, no slot) stays legal.
+	 * A bare MIME value such as 'application/ld+json' is data, not a tag: the
+	 * JSON-LD family requires the script tag shape around it.
+	 *
+	 * @param string $shape Normalized statement shape.
+	 *
+	 * @return array<int, string>
+	 */
+	private function protected_tag_families( string $shape ): array {
+		$families = [];
+
+		foreach ( $this->tag_start_offsets( $shape, 'meta' ) as $offset ) {
+			$region = $this->tag_region( $shape, $offset );
+
+			if ( preg_match( '/\b(name|property)\s*=/', $region ) && ( $this->region_has_close( $region ) || str_contains( $region, '<??>' ) ) ) {
+				$families[] = 'meta';
+				break;
+			}
+		}
+
+		foreach ( $this->tag_start_offsets( $shape, 'link' ) as $offset ) {
+			$region = $this->tag_region( $shape, $offset );
+
+			if ( preg_match( '/\brel\s*=/', $region ) && ( $this->region_has_close( $region ) || str_contains( $region, '<??>' ) ) ) {
+				$families[] = 'link';
+				break;
+			}
+		}
+
+		foreach ( $this->tag_start_offsets( $shape, 'script' ) as $offset ) {
+			$region = $this->tag_region( $shape, $offset );
+
+			if ( str_contains( $region, 'application/ld+json' ) && ( $this->region_has_close( $region ) || str_contains( $region, '<??>' ) ) ) {
+				$families[] = 'JSON-LD script';
+				break;
+			}
+		}
+
+		foreach ( $this->tag_start_offsets( $shape, 'title' ) as $offset ) {
+			$region      = $this->tag_region( $shape, $offset );
+			$closes      = $this->region_has_close( $region ) || str_contains( $region, '<??>' );
+			$has_content = str_contains( substr( $shape, $offset ), '</title' ) || str_contains( $shape, '<??>' );
+
+			if ( $closes && $has_content ) {
+				$families[] = 'title';
+				break;
+			}
+		}
+
+		return $families;
+	}
+
+	/**
+	 * Finds boundary-qualified occurrences of a tag start in a shape.
+	 *
+	 * @param string $shape Shape text.
+	 * @param string $tag   Tag name (lowercase).
+	 *
+	 * @return array<int, int>
+	 */
+	private function tag_start_offsets( string $shape, string $tag ): array {
+		$offsets = [];
+		$needle  = '<' . $tag;
+		$start   = 0;
+
+		while ( false !== ( $pos = strpos( $shape, $needle, $start ) ) ) {
+			$after = $shape[ $pos + strlen( $needle ) ] ?? '';
+
+			if ( ( '' === $after || ctype_space( $after ) || '>' === $after ) && $this->is_tag_boundary( $shape, $pos ) ) {
+				$offsets[] = $pos;
+			}
+
+			$start = $pos + 1;
+		}
+
+		return $offsets;
+	}
+
+	/**
+	 * Returns whether a tag start at the offset sits at a real markup boundary.
+	 *
+	 * @param string $shape  Shape text.
+	 * @param int    $offset Tag start offset.
+	 *
+	 * @return bool
+	 */
+	private function is_tag_boundary( string $shape, int $offset ): bool {
+		if ( 0 === $offset ) {
+			return true;
+		}
+
+		return false !== strpos( self::TAG_BOUNDARY_PRECEDING, $shape[ $offset - 1 ] );
+	}
+
+	/**
+	 * Returns the tag region: from the tag start to its first closing bracket
+	 * (inclusive), or to the shape end when the tag never closes.
+	 *
+	 * @param string $shape Shape text.
+	 * @param int    $start Tag start offset.
+	 *
+	 * @return string
+	 */
+	private function tag_region( string $shape, int $start ): string {
+		$close = strpos( $shape, '>', $start );
+
+		return null === $close ? substr( $shape, $start ) : substr( $shape, $start, (int) $close - $start + 1 );
+	}
+
+	/**
+	 * Returns whether a tag region carries its closing bracket.
+	 *
+	 * @param string $region Tag region text.
+	 *
+	 * @return bool
+	 */
+	private function region_has_close( string $region ): bool {
+		return str_ends_with( $region, '>' );
+	}
+
+	/**
+	 * Normalizes a string fragment: lowercase, quotes removed, whitespace collapsed.
+	 *
+	 * @param string $fragment Fragment text.
+	 *
+	 * @return string
+	 */
+	private function normalize_fragment( string $fragment ): string {
+		$fragment = str_replace( [ '"', "'" ], '', strtolower( $fragment ) );
+
+		return (string) preg_replace( '/\s+/', ' ', trim( $fragment ) );
+	}
+
+	/**
+	 * Strips the outer quotes of a single-quoted or double-quoted literal.
+	 *
+	 * @param string $content Token content.
+	 *
+	 * @return string
+	 */
+	private function strip_string_quotes( string $content ): string {
+		$first = $content[0] ?? '';
+
+		if ( in_array( $first, [ '"', "'" ], true ) && substr( $content, -1 ) === $first && strlen( $content ) >= 2 ) {
+			return substr( $content, 1, -1 );
+		}
+
+		return $content;
 	}
 
 	/**
@@ -912,37 +1217,6 @@ class InvariantBoundariesSniff implements Sniff {
 		$value      = $this->string_literal_value( $expression );
 
 		return 'true' === $normalized || '1' === $normalized || in_array( strtolower( (string) $value ), [ 'yes', 'on', 'auto-on' ], true );
-	}
-
-	/**
-	 * Returns whether a string contains document-head markup.
-	 *
-	 * @param string $content String token content.
-	 *
-	 * @return bool
-	 */
-	private function contains_head_output_marker( string $content ): bool {
-		$content = strtolower( $content );
-
-		foreach ( self::HEAD_OUTPUT_MARKERS as $marker ) {
-			if ( str_contains( $content, $marker ) ) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * Allows non-SEO HTML documents that necessarily contain their own title.
-	 *
-	 * @param string $filename Normalized filename.
-	 * @param string $content  String token content.
-	 *
-	 * @return bool
-	 */
-	private function is_allowed_non_presenter_head_string( string $filename, string $content ): bool {
-		return str_contains( $filename, '/src/sitemaps/' ) && str_contains( strtolower( $content ), '<html><head><title>' );
 	}
 
 	/**

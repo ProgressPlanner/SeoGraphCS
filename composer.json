@@ -10,7 +10,14 @@
 		"wp-coding-standards/wpcs": "^3.2"
 	},
 	"require-dev": {
+		"php-stubs/wordpress-stubs": "^6.7",
+		"phpstan/phpstan": "^2.1",
 		"phpunit/phpunit": "^9.6"
+	},
+	"autoload": {
+		"psr-4": {
+			"SeoGraphCS\\": "SeoGraphCS/"
+		}
 	},
 	"scripts": {
 		"check": [
