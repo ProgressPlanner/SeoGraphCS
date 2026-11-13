@@ -82,8 +82,22 @@ final class AlphabetizedUseStatementsSniff implements Sniff {
 			return;
 		}
 
-		$imports = $this->collect_imports( $phpcsFile, $tokens );
-		if ( count( $imports ) < 2 ) {
+		foreach ( $this->collect_import_blocks( $phpcsFile, $tokens ) as $block ) {
+			$this->check_block( $phpcsFile, $block );
+		}
+	}
+
+	/**
+	 * Checks one contiguous import block: report the first import that is not
+	 * in its sorted position (the block's expected neighbor).
+	 *
+	 * @param File              $phpcsFile The file being scanned.
+	 * @param array<int,array{name:string,line:string,start_ptr:int,end_ptr:int,name_ptr:int}> $block The block.
+	 *
+	 * @return void
+	 */
+	private function check_block( File $phpcsFile, array $block ): void {
+		if ( count( $block ) < 2 ) {
 			return;
 		}
 
@@ -91,7 +105,7 @@ final class AlphabetizedUseStatementsSniff implements Sniff {
 			static function ( array $import ): string {
 				return $import['name'];
 			},
-			$imports
+			$block
 		);
 
 		$sorted = $names;
@@ -101,36 +115,30 @@ final class AlphabetizedUseStatementsSniff implements Sniff {
 			return;
 		}
 
-		// Report at the first import that is not in its sorted position.
-		$report_ptr  = $imports[0]['name_ptr'];
-		$report_name = $names[0];
-		foreach ( $imports as $i => $import ) {
+		foreach ( $block as $i => $import ) {
 			if ( $names[ $i ] !== $sorted[ $i ] ) {
-				$report_ptr  = $import['name_ptr'];
-				$report_name = $names[ $i ];
-				break;
+				$expected = $sorted[ $this->sorted_index_of( $names, $names[ $i ] ) ];
+				$phpcsFile->addError(
+					sprintf( self::UNSORTED_MESSAGE, $expected, $names[ $i ] ),
+					$import['name_ptr'],
+					'Unsorted',
+					[ $expected, $names[ $i ] ]
+				);
+				return;
 			}
 		}
-
-		$expected = $sorted[ $this->sorted_index_of( $names, $report_name ) ];
-		$phpcsFile->addError(
-			sprintf( self::UNSORTED_MESSAGE, $expected, $report_name ),
-			$report_ptr,
-			'Unsorted',
-			[ $expected, $report_name ]
-		);
 	}
 
 	/**
-	 * Collects the contiguous namespace-import block starting at the file's
-	 * first namespace import.
+	 * Collects every contiguous top-level namespace-import block in the file
+	 * (a blank line or any non-import statement starts a new block).
 	 *
 	 * @param File              $phpcsFile The file being scanned.
 	 * @param array<int,array>  $tokens    The file tokens.
 	 *
-	 * @return array<int,array{name:string,line:string,start_ptr:int,end_ptr:int,name_ptr:int}>
+	 * @return array<int,array<int,array{name:string,line:string,start_ptr:int,end_ptr:int,name_ptr:int}>>
 	 */
-	private function collect_imports( File $phpcsFile, array $tokens ): array {
+	private function collect_import_blocks( File $phpcsFile, array $tokens ): array {
 		$all = [];
 		foreach ( array_keys( $tokens ) as $i ) {
 			if ( \T_USE !== $tokens[ $i ]['code'] ) {
@@ -163,15 +171,17 @@ final class AlphabetizedUseStatementsSniff implements Sniff {
 			return [];
 		}
 
-		// Keep the contiguous run starting at the first import: a blank
-		// line or any non-import statement starts a new block.
-		$block = [];
+		// Group the imports into contiguous blocks: a blank line or any
+		// non-import statement between two imports starts a new block.
+		$blocks = [];
+		$block  = [];
 		foreach ( $all as $import ) {
 			if ( [] !== $block ) {
 				$prev = $block[ \count( $block ) - 1 ];
 				$between = $this->block_between( $phpcsFile, $tokens, $prev['end_ptr'], $import['use_ptr'] );
 				if ( '' !== trim( $between ) ) {
-					break;
+					$blocks[] = $block;
+					$block    = [];
 				}
 			}
 			$block[] = [
@@ -183,7 +193,11 @@ final class AlphabetizedUseStatementsSniff implements Sniff {
 			];
 		}
 
-		return $block;
+		if ( [] !== $block ) {
+			$blocks[] = $block;
+		}
+
+		return $blocks;
 	}
 
 	/**

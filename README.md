@@ -27,11 +27,11 @@ the architecture-boundary sniff, and the project convention sniffs.
 - `SeoGraphCS.Conventions.AlphabetizedUseStatements` requires a file's
   namespace import statements to be sorted alphabetically by the fully
   qualified name each import introduces (a grouped import orders by its
-  first expanded member). The diagnostic is report-only: re-sorting an
-  import block is a one-time mechanical edit, and the sniff deliberately
-  never rewrites blocks in place during a `phpcbf` run. Trait `use`
-  statements, `use function`, and `use const` statements are outside the
-  convention and are ignored.
+  shared prefix, so it sorts before longer imports of that same prefix). The
+  diagnostic is report-only: re-sorting an import block is a one-time
+  mechanical edit, and the sniff deliberately never rewrites blocks in place
+  during a `phpcbf` run. Trait `use` statements, `use function`, and
+  `use const` statements are outside the convention and are ignored.
 
 ## Development
 

@@ -42,7 +42,7 @@ final class AlphabetizedUseStatementsSniffTest extends TestCase {
 		$this->assertSame( [], $this->convention_sources( 'src' ) );
 	}
 
-	public function test_grouped_imports_order_by_their_first_expanded_name(): void {
+	public function test_grouped_imports_order_by_their_shared_prefix(): void {
 		file_put_contents(
 			$this->fixture_root . '/src/grouped-reversed.php',
 			"<?php\n\nnamespace SeoGraph;\n\nuse SeoGraph\\Templating\\{Template_Renderer, Template_Source};\nuse SeoGraph\\Storage\\Options;\n\nclass GroupedReversed {\n}\n"
@@ -50,6 +50,18 @@ final class AlphabetizedUseStatementsSniffTest extends TestCase {
 
 		$source = $this->convention_sources( 'src' );
 		$this->assertContains( 'SeoGraphCS.Conventions.AlphabetizedUseStatements.Unsorted', $source );
+	}
+
+	public function test_grouped_import_prefix_key_sorts_before_longer_same_prefix_imports(): void {
+		// Prefix-key semantics (the enforced order): a group import sorts by
+		// its shared prefix, so "use A\B { ... }" precedes "use A\B\C" even
+		// though the first expanded member would sort after it.
+		file_put_contents(
+			$this->fixture_root . '/src/group-prefix-key.php',
+			"<?php\n\nnamespace SeoGraph;\n\nuse SeoGraph\\Templating\\{Zeta, Alpha};\nuse SeoGraph\\Templating\\Options;\n\nclass GroupPrefixKey {\n}\n"
+		);
+
+		$this->assertSame( [], $this->convention_sources( 'src' ) );
 	}
 
 	public function test_trait_use_statements_are_ignored(): void {
