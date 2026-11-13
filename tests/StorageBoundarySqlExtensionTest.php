@@ -1,11 +1,13 @@
 <?php
 /**
- * Storage-boundary SQL extension tests.
+ * Storage-boundary SQL check tests.
  *
  * Runs the installed PHPStan against inert fixture files with the real
- * WordPress stubs, proving the extension resolves aliases of the real
- * global (direct, variable and array-held), honors the storage boundary,
- * and leaves unrelated objects valid.
+ * WordPress stubs, proving that the type-driven extension and the
+ * statement-level rule together reject direct SQL outside the storage
+ * boundary — including aliases and array-held copies, with or without the
+ * global's type being resolvable — while the boundary itself and unrelated
+ * objects stay valid.
  *
  * @package SeoGraphCS
  */
@@ -13,7 +15,7 @@
 use PHPUnit\Framework\TestCase;
 
 /**
- * Verifies the PHPStan direct-SQL boundary extension.
+ * Verifies the PHPStan direct-SQL boundary extension and rule.
  */
 final class StorageBoundarySqlExtensionTest extends TestCase {
 
@@ -22,7 +24,7 @@ final class StorageBoundarySqlExtensionTest extends TestCase {
 	protected function setUp(): void {
 		// The fixture must live inside the package tree: PHPStan discovers the
 		// project autoloader from the analyzed paths, and the extension class
-		// only autoloades through the package's vendor/autoload.php.
+		// only autoloads through the package's vendor/autoload.php.
 		$this->fixture_root = dirname( __DIR__ ) . '/.test-fixtures/sql-' . bin2hex( random_bytes( 4 ) );
 		mkdir( $this->fixture_root . '/src/frontend', 0700, true );
 		mkdir( $this->fixture_root . '/src/storage', 0700, true );
@@ -32,13 +34,13 @@ final class StorageBoundarySqlExtensionTest extends TestCase {
 		$this->remove_directory( $this->fixture_root );
 	}
 
-	public function test_sql_methods_on_wpdb_and_its_subclasses_are_rejected_outside_the_boundary(): void {
+	public function test_typed_wpdb_sql_is_rejected_outside_the_boundary(): void {
 		file_put_contents(
-			$this->fixture_root . '/src/frontend/class-bad.php',
+			$this->fixture_root . '/src/frontend/class-bad-typed.php',
 			'<?php
 // The @var annotation is the standard way the real WordPress stubs make the
-// global resolvable; it must not be needed for the typed cases below.
-class seograph_bad_sql {
+// global resolvable; the type-driven extension must fire for these shapes.
+class seograph_bad_sql_typed {
 	public function direct(): void {
 		global $wpdb;
 		/** @var \wpdb $wpdb */
@@ -69,6 +71,67 @@ class seograph_sql_repository {
 }
 '
 		);
+
+		$config = $this->write_config();
+		$result = $this->run_phpstan( $config );
+
+		$bad = $this->messages_for( $result, 'src/frontend/class-bad-typed.php' );
+		$this->assertSame( 4, count( $bad ), implode( "\n", $bad ) );
+		foreach ( $bad as $message ) {
+			$this->assertStringContainsString( 'restricted to the storage layer boundary', $message );
+		}
+	}
+
+	public function test_bare_unannotated_wpdb_global_is_rejected_outside_the_boundary(): void {
+		file_put_contents(
+			$this->fixture_root . '/src/frontend/class-bad-bare.php',
+			'<?php
+// No @var annotation: the analysis run resolves the global to mixed, so the
+// statement-level rule must catch these shapes by scope tracking.
+class seograph_bad_sql_bare {
+	public function direct(): void {
+		global $wpdb;
+		$wpdb->query( "SELECT 1" );
+	}
+	public function aliased(): void {
+		global $wpdb;
+		$db = $wpdb;
+		$db->get_var( "SELECT 2" );
+	}
+	public function array_held(): void {
+		global $wpdb;
+		$databases = [ $wpdb ];
+		$databases[0]->get_row( "SELECT 3" );
+	}
+	public function inside_closure(): void {
+		$callback = static function() {
+			global $wpdb;
+			$wpdb->get_col( "SELECT 4" );
+		};
+		$callback();
+	}
+	public function non_sql_methods(): void {
+		global $wpdb;
+		$wpdb->flush();
+	}
+	public function local_parameter( mixed $wpdb ): void {
+		$wpdb->query( "SELECT 5" );
+	}
+}
+'
+		);
+
+		$config = $this->write_config();
+		$result = $this->run_phpstan( $config );
+
+		$bad = $this->messages_for( $result, 'src/frontend/class-bad-bare.php' );
+		$this->assertSame( 4, count( $bad ), implode( "\n", $bad ) );
+		foreach ( $bad as $message ) {
+			$this->assertStringContainsString( 'restricted to the storage layer boundary', $message );
+		}
+	}
+
+	public function test_the_storage_boundary_is_allowed_for_both_paths(): void {
 		file_put_contents(
 			$this->fixture_root . '/src/storage/class-ok.php',
 			'<?php
@@ -79,10 +142,27 @@ class seograph_storage_sql {
 		$wpdb->query( "SELECT 1" );
 		$wpdb->get_results( "SELECT 2" );
 	}
+	public function bare_run(): void {
+		global $wpdb;
+		$db   = $wpdb;
+		$db->query( "SELECT 3" );
+	}
 }
 '
 		);
 
+		$config = $this->write_config();
+		$result = $this->run_phpstan( $config );
+
+		$ok = $this->messages_for( $result, 'src/storage/class-ok.php' );
+		$this->assertSame( [], $ok, implode( "\n", $ok ) );
+	}
+
+	/**
+	 * Writes the fixture PHPStan configuration with both the extension and
+	 * the statement-level rule registered, the way the consuming plugin does.
+	 */
+	private function write_config(): string {
 		$config = $this->fixture_root . '/phpstan.neon';
 		file_put_contents(
 			$config,
@@ -97,20 +177,21 @@ class seograph_storage_sql {
 			. "services:\n"
 			. "    -\n"
 			. "        class: SeoGraphCS\\PhpStan\\StorageBoundarySqlExtension\n"
+			. "        arguments:\n"
+			. "            allowedPathParts:\n"
+			. "                - /src/storage/\n"
 			. "        tags:\n"
 			. "            - phpstan.restrictedMethodUsageExtension\n"
 			. "    -\n"
-			. "        class: PHPStan\\Rules\\RestrictedUsage\\RestrictedMethodUsageRule\n"
+			. "        class: SeoGraphCS\\PhpStan\\StorageBoundarySqlRule\n"
+			. "        arguments:\n"
+			. "            allowedPathParts:\n"
+			. "                - /src/storage/\n"
 			. "        tags:\n"
-			. "            - phpstan.rules\n"
-			);
+			. "            - phpstan.rules.rule\n"
+			 );
 
-		$result = $this->run_phpstan( $config );
-		$bad    = $this->messages_for( $result, 'src/frontend/class-bad.php' );
-		$ok     = $this->messages_for( $result, 'src/storage/class-ok.php' );
-
-		$this->assertSame( 4, count( $bad ), implode( "\n", $bad ) );
-		$this->assertSame( [], $ok );
+		return $config;
 	}
 
 	/**
@@ -126,11 +207,8 @@ class seograph_storage_sql {
 		);
 
 		exec( $command, $output, $exit_code );
-		$this->assertSame( 1, $exit_code, 'the fixture must produce analysis errors' );
-
 		$result = json_decode( implode( "\n", $output ), true );
 		$this->assertIsArray( $result, implode( "\n", $output ) );
-
 		return $result;
 	}
 

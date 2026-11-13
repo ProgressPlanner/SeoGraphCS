@@ -41,7 +41,7 @@ final class StorageBoundarySqlExtension implements RestrictedMethodUsageExtensio
 	 *
 	 * @var array<string, true>
 	 */
-	private const SQL_METHODS = [
+	public const SQL_METHODS = [
 		'delete'      => true,
 		'get_col'     => true,
 		'get_results' => true,
