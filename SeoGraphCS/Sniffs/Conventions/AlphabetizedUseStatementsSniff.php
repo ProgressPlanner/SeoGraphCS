@@ -1,9 +1,12 @@
 <?php
 /**
- * Enforces the SEO Graph alphabetized-import convention.
+ * Copyright (c) 2026 ProgressPlanner.
  *
- * @package SeoGraphCS
+ * Licensed under the MIT license.
+ * See the file LICENSE or https://github.com/ProgressPlanner/SeoGraphCS for details.
  */
+
+declare(strict_types=1);
 
 namespace SeoGraphCS\Sniffs\Conventions;
 
@@ -11,72 +14,72 @@ use PHP_CodeSniffer\Files\File;
 use PHP_CodeSniffer\Sniffs\Sniff;
 
 /**
- * Requires a file's namespace import statements to be ordered alphabetically.
+ * Requires first-party PHP `use` import blocks to be sorted alphabetically.
  *
- * The ordering compares the fully qualified name each import introduces
- * (a grouped import orders by its first expanded member) using byte-wise
- * string comparison. Trait `use` statements inside classes are not imports
- * and are ignored; `use function` and `use const` statements are outside the
- * convention and are ignored as well.
+ * The convention: within a file, every contiguous group of namespace
+ * imports is ordered alphabetically by fully qualified name
+ * (case-sensitive byte order, the same order PHP and this standard use
+ * elsewhere), with one import per line and no blank line inside the group.
+ * `use function` and `use const` imports are outside the convention and
+ * are never reported or reordered; trait `use` statements inside class,
+ * interface, or trait bodies are ignored entirely.
+ *
+ * The sniff reports one message per mis-ordered import block (pointing at
+ * the first import that breaks the order). The diagnostic is report-only:
+ * re-sorting a block is a one-time mechanical operation, and keeping the
+ * sniff out of the in-place fixer keeps the convention from ever rewriting
+ * import blocks during a normal PHPCBF run.
  */
-class AlphabetizedUseStatementsSniff implements Sniff {
-
+final class AlphabetizedUseStatementsSniff implements Sniff {
 	/**
-	 * Files already processed by this sniff.
+	 * Message when a contiguous import block is not sorted.
 	 *
-	 * @var array<string, true>
+	 * @var string
 	 */
-	private array $processed = [];
+	public const UNSORTED_MESSAGE = 'Import %1$s must come before import %2$s; namespace imports must be sorted alphabetically';
 
 	/**
-	 * Implements this sniff.
+	 * Files whose full check has already run (one report per file).
 	 *
-	 * @param File $phpcsFile The file being scanned.
+	 * @var array<string,bool>
+	 */
+	private $processed_files = [];
+
+	/**
+	 * Register the token types this sniff listens on.
 	 *
-	 * @return void|int Last stack pointer processed.
+	 * @return int[]
 	 */
 	public function register(): array {
 		return [ \T_USE ];
 	}
 
 	/**
-	 * Implements this sniff.
+	 * Processes the file: runs the full import-block check once per file.
 	 *
-	 * @param \PHP_CodeSniffer\Files\File $phpcsFile The file being scanned.
-	 * @param int                         $stackPtr  The position of the current token.
+	 * @param File $phpcsFile The file being scanned.
+	 * @param int  $stackPtr  The position of the current T_USE token.
 	 *
 	 * @return void
 	 */
 	public function process( File $phpcsFile, $stackPtr ): void {
-		// The sniff is invoked once per use statement; run the full check only
-		// once per file so reports are not duplicated.
 		$file_name = $phpcsFile->getFilename();
-		if ( isset( $this->processed[ $file_name ] ) ) {
+		if ( isset( $this->processed_files[ $file_name ] ) ) {
 			return;
 		}
-		$this->processed[ $file_name ] = true;
+		$this->processed_files[ $file_name ] = true;
 
 		$tokens = $phpcsFile->getTokens();
 
-		// Closure variable captures are `use (...)`, never `use \Name\Path`.
+		// Closure variable captures are `use (...)`, never namespace imports.
 		$next = $phpcsFile->findNext( [ \T_WHITESPACE, \T_COMMENT, \T_DOC_COMMENT ], $stackPtr + 1, null, true );
 		if ( false !== $next && '(' === $tokens[ $next ]['content'] ) {
 			return;
 		}
 
-		// Trait use statements live inside a class, interface, or trait body;
-		// only namespace-level imports are subject to the convention.
+		// Trait use statements live inside a class, interface, or trait body.
 		if ( $this->is_inside_type_body( $tokens, $stackPtr ) ) {
 			return;
-		}
-
-		// `use function` / `use const` statements are outside the convention.
-		$next = $phpcsFile->findNext( [ \T_WHITESPACE, \T_COMMENT, \T_DOC_COMMENT ], $stackPtr + 1, null, true );
-		if ( false !== $next ) {
-			$keyword = $tokens[ $next ]['content'];
-			if ( 'function' === $keyword || 'const' === $keyword ) {
-				return;
-			}
 		}
 
 		$imports = $this->collect_imports( $phpcsFile, $tokens );
@@ -84,209 +87,187 @@ class AlphabetizedUseStatementsSniff implements Sniff {
 			return;
 		}
 
-		$highest_seen = '';
-		foreach ( $imports as $import ) {
-			if ( '' !== $highest_seen && strcmp( $highest_seen, $import['first_name'] ) > 0 ) {
-				$message = sprintf(
-					'Import "%s" must come before import "%s"; namespace imports must be sorted alphabetically by fully qualified name.',
-					$import['first_name'],
-					$highest_seen
-				);
-				$phpcsFile->addFixableError( $message, $import['ptr'], 'Unsorted' );
-				$this->apply_block_fix( $phpcsFile, $imports );
-				return;
-			}
-
-			$highest_seen = $import['first_name'];
-		}
-	}
-
-	/**
-	 * Collects the namespace-level imports of a file, in file order.
-	 *
-	 * @param File $phpcsFile The file being scanned.
-	 *
-	 * @return array<int,array<string,mixed>> Import descriptors.
-	 */
-	private function collect_imports( File $phpcsFile ): array {
-		$tokens  = $phpcsFile->getTokens();
-		$imports = [];
-		foreach ( $tokens as $ptr => $token ) {
-			if ( \T_USE !== $token['code'] ) {
-				continue;
-			}
-
-			if ( $this->is_inside_type_body( $tokens, $ptr ) ) {
-				continue;
-			}
-
-			$next = $phpcsFile->findNext( [ \T_WHITESPACE, \T_COMMENT, \T_DOC_COMMENT ], $ptr + 1, null, true );
-			if ( false !== $next && ( 'function' === $tokens[ $next ]['content'] || 'const' === $tokens[ $next ]['content'] ) ) {
-				continue;
-			}
-
-			$raw = '';
-			$end = $ptr;
-			for ( $i = $ptr; $i < count( $tokens ); $i++ ) {
-				$raw .= $tokens[ $i ]['content'];
-				$end = $i;
-				if ( ';' === $tokens[ $i ]['content'] || '}' === $tokens[ $i ]['content'] ) {
-					break;
-				}
-			}
-			if ( '' === trim( $raw ) ) {
-				continue;
-			}
-
-			$statement = ltrim( substr( $raw, 3 ) );
-			if ( '' !== $statement && ( str_starts_with( $statement, 'function' ) || str_starts_with( $statement, 'const' ) ) ) {
-				continue;
-			}
-
-			$import = $this->parse_import( $statement );
-			if ( null === $import ) {
-				continue;
-			}
-
-			$import['ptr']        = $ptr;
-			$import['end_ptr']    = $end;
-			$import['raw']        = trim( $raw );
-			$imports[ count( $imports ) ] = $import;
-		}
-
-		return array_values( $imports );
-	}
-
-	/**
-	 * Parses one import statement into a comparable descriptor.
-	 *
-	 * @param string $statement The statement text after the `use` keyword.
-	 *
-	 * @return array<string,mixed>|null The descriptor, or null when unparseable.
-	 */
-	private function parse_import( string $statement ): ?array {
-		$statement = trim( $statement );
-		if ( '' === $statement ) {
-			return null;
-		}
-
-		// Grouped import: prefix\{member, member, ...}
-		if ( false !== strpos( $statement, '{' ) ) {
-			$prefix   = ltrim( substr( $statement, 0, strpos( $statement, '{' ) ), '\\' );
-			$inner    = trim( substr( $statement, strpos( $statement, '{' ) + 1, strrpos( $statement, '}' ) - strpos( $statement, '{' ) - 1 ) );
-			$members  = array_map(
-				static function ( string $member ): string {
-					return ltrim( trim( $member ), '\\' );
-				},
-				explode( ',', $inner )
-			);
-			$members  = array_values( array_filter( $members, static fn ( string $member ): bool => '' !== $member ) );
-			if ( '' === $prefix || [] === $members ) {
-				return null;
-			}
-
-			$expanded = array_map(
-				static function ( string $member ) use ( $prefix ): string {
-					return $prefix . '\\' . $member;
-				},
-				$members
-			);
-
-			return [
-				'first_name' => $expanded[0],
-				'names'      => $expanded,
-				'grouped'    => true,
-			];
-		}
-
-		$name = ltrim( rtrim( $statement, ';' ), chr(92) );
-		if ( '' === $name ) {
-			return null;
-		}
-
-		return [
-			'first_name' => $name,
-			'names'      => [ $name ],
-			'grouped'    => false,
-		];
-	}
-
-	/**
-	 * Reorders a contiguous import block into alphabetical order.
-	 *
-	 * The fix only applies when the block is contiguous (no non-whitespace
-	 * content between the statements); anything else is reported but left
-	 * for the author to sort manually.
-	 *
-	 * @param File                           $phpcsFile The file being scanned.
-	 * @param array<int,array<string,mixed>> $tokens    The file tokens.
-	 * @param array<int,array<string,mixed>> $imports   Import descriptors in file order.
-	 *
-	 * @return void
-	 */
-	private function apply_block_fix( File $phpcsFile, array $imports ): void {
-		$first  = $imports[0];
-		$last   = $imports[ count( $imports ) - 1 ];
-		$tokens = $phpcsFile->getTokens();
-
-		// Contiguity guard: every token between the first use and the last
-		// terminator must belong to one of the statements or be whitespace.
-		$covered = [];
-		foreach ( $imports as $import ) {
-			for ( $i = $import['ptr']; $i <= $import['end_ptr']; $i++ ) {
-				$covered[ $i ] = true;
-			}
-		}
-		for ( $i = $first['ptr']; $i <= $last['end_ptr']; $i++ ) {
-			if ( isset( $covered[ $i ] ) ) {
-				continue;
-			}
-			if ( \T_WHITESPACE !== $tokens[ $i ]['code'] && ! in_array( $tokens[ $i ]['code'], [ \T_COMMENT, \T_DOC_COMMENT ], true ) ) {
-				return;
-			}
-		}
-
-		$ordered = $imports;
-		usort(
-			$ordered,
-			static function ( array $a, array $b ): int {
-				return strcmp( $a['first_name'], $b['first_name'] );
-			}
+		$names = array_map(
+			static function ( array $import ): string {
+				return $import['name'];
+			},
+			$imports
 		);
 
-		$fix = $phpcsFile->fixer;
-		if ( null === $fix ) {
+		$sorted = $names;
+		sort( $sorted, SORT_STRING );
+
+		if ( $names === $sorted ) {
 			return;
 		}
 
-		$original_block = '';
-		for ( $i = $first['ptr']; $i <= $last['end_ptr']; $i++ ) {
-			$original_block .= $tokens[ $i ]['content'];
-		}
-		$original_lines = explode( "\n", $original_block );
-		$indent         = ltrim( array_shift( $original_lines ), "\t " );
-
-		$fixed_lines = [];
-		foreach ( $ordered as $index => $import ) {
-			$line = $import['raw'];
-			if ( $index > 0 ) {
-				$line = $indent . $line;
+		// Report at the first import that is not in its sorted position.
+		$report_ptr  = $imports[0]['name_ptr'];
+		$report_name = $names[0];
+		foreach ( $imports as $i => $import ) {
+			if ( $names[ $i ] !== $sorted[ $i ] ) {
+				$report_ptr  = $import['name_ptr'];
+				$report_name = $names[ $i ];
+				break;
 			}
-			$fixed_lines[] = $line;
 		}
 
-		$fix->beginChangeset();
-		$fix->replaceToken( $first['ptr'], implode( "\n", $fixed_lines ) );
-		for ( $i = $first['ptr'] + 1; $i <= $last['end_ptr']; $i++ ) {
-			$fix->replaceToken( $i, '' );
-		}
-		$fix->endChangeset();
+		$expected = $sorted[ $this->sorted_index_of( $names, $report_name ) ];
+		$phpcsFile->addError(
+			sprintf( self::UNSORTED_MESSAGE, $expected, $report_name ),
+			$report_ptr,
+			'Unsorted',
+			[ $expected, $report_name ]
+		);
 	}
+
 	/**
-	 * Whether a token sits inside a class, interface, or trait body.
+	 * Collects the contiguous namespace-import block starting at the file's
+	 * first namespace import.
 	 *
-	 * @param array<int,array<string,mixed>> $tokens   The file tokens.
-	 * @param int                            $stackPtr The token to test.
+	 * @param File              $phpcsFile The file being scanned.
+	 * @param array<int,array>  $tokens    The file tokens.
+	 *
+	 * @return array<int,array{name:string,line:string,start_ptr:int,end_ptr:int,name_ptr:int}>
+	 */
+	private function collect_imports( File $phpcsFile, array $tokens ): array {
+		$all = [];
+		foreach ( array_keys( $tokens ) as $i ) {
+			if ( \T_USE !== $tokens[ $i ]['code'] ) {
+				continue;
+			}
+			// `use function` / `use const` are outside the convention.
+			$next = $phpcsFile->findNext( [ \T_WHITESPACE, \T_COMMENT, \T_DOC_COMMENT ], $i + 1, null, true );
+			$keyword = false !== $next ? $tokens[ $next ]['content'] : '';
+			if ( 'function' === $keyword || 'const' === $keyword ) {
+				continue;
+			}
+			if ( $this->is_inside_type_body( $tokens, $i ) ) {
+				continue;
+			}
+			$end_ptr = $this->statement_end( $phpcsFile, $tokens, $i );
+			$raw     = '';
+			for ( $j = $i; $j <= $end_ptr; $j++ ) {
+				$raw .= $tokens[ $j ]['content'];
+			}
+			$all[] = [
+				'use_ptr'  => $i,
+				'end_ptr'  => $end_ptr,
+				'raw'      => trim( $raw ),
+				'name'     => $this->import_name( $raw ),
+				'name_ptr' => false !== $next ? $next : ( $i + 1 ),
+			];
+		}
+
+		if ( [] === $all ) {
+			return [];
+		}
+
+		// Keep the contiguous run starting at the first import: a blank
+		// line or any non-import statement starts a new block.
+		$block = [];
+		foreach ( $all as $import ) {
+			if ( [] !== $block ) {
+				$prev = $block[ \count( $block ) - 1 ];
+				$between = $this->block_between( $phpcsFile, $tokens, $prev['end_ptr'], $import['use_ptr'] );
+				if ( '' !== trim( $between ) ) {
+					break;
+				}
+			}
+			$block[] = [
+				'name'      => $import['name'],
+				'name_ptr'  => $import['name_ptr'],
+				'start_ptr' => $import['use_ptr'],
+				'end_ptr'   => $import['end_ptr'],
+				'line'      => $import['raw'],
+			];
+		}
+
+		return $block;
+	}
+
+	/**
+	 * Fully qualified name of the import (alias or group ignored).
+	 *
+	 * @param File       $phpcsFile The file being scanned.
+	 * @param array<int,array> $tokens The file tokens.
+	 * @param int        $use_ptr   Position of the T_USE token.
+	 *
+	 * @return string
+	 */
+	private function import_name( string $raw ): string {
+		// Sort key from the raw statement: strip the `use` keyword and a
+		// leading backslash, drop an `as Alias` suffix; for a group import
+		// (`use A\B { C, D }`) the shared prefix is the key.
+		if ( str_starts_with( $raw, 'use' ) ) {
+			$raw = ltrim( substr( $raw, 3 ) );
+		}
+		if ( str_contains( $raw, '{' ) ) {
+			$raw = substr( $raw, 0, strpos( $raw, '{' ) );
+		}
+		if ( str_contains( $raw, ' as ' ) ) {
+			$raw = substr( $raw, 0, strpos( $raw, ' as ' ) );
+		}
+
+		return ltrim( trim( $raw ), '\\' );
+	}
+
+	/**
+	 * Token pointer of the semicolon ending the statement starting at $use_ptr.
+	 *
+	 * @param File       $phpcsFile The file being scanned.
+	 * @param array<int,array> $tokens The file tokens.
+	 * @param int        $use_ptr   Position of the T_USE token.
+	 *
+	 * @return int
+	 */
+	private function statement_end( File $phpcsFile, array $tokens, int $use_ptr ): int {
+		// Find the T_SEMICOLON that follows the use token, skipping over the
+		// body of a group import (its inner semicolons end members, not the
+		// statement): track brace depth.
+		$depth = 0;
+		for ( $i = $use_ptr; $i < \count( $tokens ); $i++ ) {
+			$code = $tokens[ $i ]['code'];
+			if ( \T_OPEN_CURLY_BRACKET === $code ) {
+				$depth++;
+			}
+			if ( \T_CLOSE_CURLY_BRACKET === $code ) {
+				if ( 0 === $depth ) {
+					break; // left the statement (defensive)
+				}
+				$depth--;
+			}
+			if ( \T_SEMICOLON === $code && 0 === $depth ) {
+				return $i;
+			}
+		}
+		return $use_ptr;
+	}
+
+	/**
+	 * Raw text between two token pointers (exclusive on both ends).
+	 *
+	 * @param File       $phpcsFile The file being scanned.
+	 * @param array<int,array> $tokens The file tokens.
+	 * @param int        $start     First excluded pointer.
+	 * @param int        $end       Last excluded pointer.
+	 *
+	 * @return string
+	 */
+	private function block_between( File $phpcsFile, array $tokens, int $start, int $end ): string {
+		$out = '';
+		for ( $i = $start + 1; $i < $end; $i++ ) {
+			$out .= $tokens[ $i ]['content'];
+		}
+		return $out;
+	}
+
+	/**
+	 * Whether a token sits inside a function or type body (imports there are
+	 * not namespace imports; closure captures are already excluded earlier).
+	 *
+	 * @param array<int,array> $tokens   The file tokens.
+	 * @param int              $stackPtr The token to test.
 	 *
 	 * @return bool
 	 */
@@ -297,12 +278,29 @@ class AlphabetizedUseStatementsSniff implements Sniff {
 			if ( ! is_int( $condition ) || ! isset( $tokens[ $condition ] ) ) {
 				continue;
 			}
-			if ( in_array( $tokens[ $condition ]['code'], [ \T_CLASS, \T_INTERFACE, \T_TRAIT, \T_FUNCTION ], true ) ) {
+			$code = $tokens[ $condition ]['code'];
+			if ( in_array( $code, [ \T_CLASS, \T_INTERFACE, \T_TRAIT, \T_FUNCTION ], true ) ) {
 				return true;
 			}
 		}
 
 		return false;
 	}
-}
 
+	/**
+	 * Position of a name in an ordered list (fallback to 0 when absent).
+	 *
+	 * @param string[] $list      The list.
+	 * @param string   $needle    The name.
+	 *
+	 * @return int
+	 */
+	private function sorted_index_of( array $list, string $needle ): int {
+		foreach ( $list as $i => $value ) {
+			if ( $value === $needle ) {
+				return $i;
+			}
+		}
+		return 0;
+	}
+}

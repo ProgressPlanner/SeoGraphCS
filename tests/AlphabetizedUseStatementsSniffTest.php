@@ -79,30 +79,36 @@ final class AlphabetizedUseStatementsSniffTest extends TestCase {
 		$this->assertSame( [], $this->convention_sources( 'src' ) );
 	}
 
-	public function test_fixer_orders_a_contiguous_block_alphabetically(): void {
+		public function test_report_only_diagnostic_never_corrupts_a_file(): void {
+		$fixture = $this->fixture_root . '/src/fix-me.php';
 		file_put_contents(
-			$this->fixture_root . '/src/fix-me.php',
+			$fixture,
 			"<?php\n\nnamespace SeoGraph;\n\nuse SeoGraph\\Templating\\Template_Renderer;\nuse SeoGraph\\Storage\\Options;\n\nclass FixMe {\n}\n"
 		);
 
 		$command = sprintf(
-			'%s --standard=SeoGraphCS --extensions=php --report=json -d memory_limit=2G -- %s',
+			'%s --standard=SeoGraphCS --extensions=php -- %s',
 			escapeshellarg( dirname( __DIR__ ) . '/vendor/bin/phpcbf' ),
-			escapeshellarg( $this->fixture_root . '/src/fix-me.php' )
+			escapeshellarg( $fixture )
 		);
 
 		exec( $command, $output, $code );
-		// phpcbf exits 1 when the file retains any unfixable error (the fixture
-		// intentionally lacks a WPCS file header); only a crash (2) is a failure.
+		// phpcbf exits 1 when the file retains unfixable errors (the diagnostic
+		// is report-only, and the fixture lacks a WPCS file header); only a
+		// crash (2) is a failure.
 		$this->assertLessThan( 2, (int) $code, implode( "\n", $output ) );
 
-		$fixed = file_get_contents( $this->fixture_root . '/src/fix-me.php' );
-		$this->assertNotFalse( $fixed );
-		$renderer_at = strpos( $fixed, 'use SeoGraph\\Templating\\Template_Renderer;' );
-		$options_at  = strpos( $fixed, 'use SeoGraph\\Storage\\Options;' );
-		$this->assertNotFalse( $options_at );
-		$this->assertNotFalse( $renderer_at );
-		$this->assertLessThan( $renderer_at, $options_at, 'The Options import must be ordered before the Template_Renderer import.' );
+		// A report-only diagnostic must never rewrite the file: the imports
+		// are still present, in their original (mis-ordered) order.
+		$after = file_get_contents( $fixture );
+		$this->assertNotFalse( $after );
+		$this->assertStringContainsString( "use SeoGraph\\Templating\\Template_Renderer;", $after );
+		$this->assertStringContainsString( "use SeoGraph\\Storage\\Options;", $after );
+		$this->assertLessThan(
+			strpos( $after, 'use SeoGraph\\Storage\\Options;' ),
+			strpos( $after, 'use SeoGraph\\Templating\\Template_Renderer;' ),
+			'The file must be untouched: the reversed import order is still present.'
+		);
 	}
 
 	/**
