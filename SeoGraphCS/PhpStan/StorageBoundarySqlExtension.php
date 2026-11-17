@@ -92,7 +92,7 @@ final class StorageBoundarySqlExtension implements RestrictedMethodUsageExtensio
 
 		return RestrictedUsage::create(
 			'Direct SQL through wpdb (or a wpdb subclass) is restricted to the storage layer boundary.',
-			'seograph.directSqlOutsideStorage'
+			'verso.directSqlOutsideStorage'
 		);
 	}
 }

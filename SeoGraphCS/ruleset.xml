@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <ruleset xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="SeoGraphCS" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/PHPCSStandards/PHP_CodeSniffer/master/phpcs.xsd">
-	<description>WordPress Coding Standards, PHPCompatibility, and SEO Graph architecture conventions.</description>
+	<description>WordPress Coding Standards, PHPCompatibility, and Verso architecture conventions.</description>
 
 	<config name="minimum_wp_version" value="7.0"/>
 	<config name="testVersion" value="8.1-"/>
@@ -15,10 +15,10 @@
 	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
 		<properties>
 			<property name="prefixes" type="array">
-				<element value="seograph"/>
-				<element value="wpseograph"/>
-				<element value="SeoGraph"/>
-				<element value="SEOGRAPH"/>
+				<element value="verso"/>
+				<element value="wpverso"/>
+				<element value="Verso"/>
+				<element value="VERSO"/>
 			</property>
 		</properties>
 	</rule>
@@ -26,7 +26,7 @@
 	<rule ref="WordPress.WP.I18n">
 		<properties>
 			<property name="text_domain" type="array">
-				<element value="wp-seo-graph"/>
+				<element value="verso"/>
 			</property>
 		</properties>
 	</rule>

@@ -40,7 +40,7 @@ final class InvariantBoundariesSniffTest extends TestCase {
 		mkdir( $this->fixture_root . '/src/redirects', 0700, true );
 		file_put_contents(
 			$this->fixture_root . '/src/redirects/class-redirect-service.php',
-			"<?php\nfunction seograph_redirect_service( string \$target ): void {\n\twp_redirect( \$target, 302, 'seo-graph; rule=1' );\n}\n"
+			"<?php\nfunction seograph_redirect_service( string \$target ): void {\n\twp_redirect( \$target, 302, 'verso; rule=1' );\n}\n"
 		);
 
 		$result = $this->run_phpcs();

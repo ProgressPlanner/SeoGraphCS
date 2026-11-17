@@ -1,14 +1,14 @@
 # SeoGraphCS
 
-SeoGraphCS is the reusable PHP_CodeSniffer standard for SEO Graph projects. It
+SeoGraphCS is the reusable PHP_CodeSniffer standard for Verso projects. It
 combines WordPress Coding Standards and PHPCompatibilityWP with hard
-architecture checks for SEO Graph's runtime boundaries and explicit project
+architecture checks for Verso's runtime boundaries and explicit project
 conventions.
 
 ## Installation
 
 ```bash
-composer require --dev progressplanner/seographcs:1.2.0
+composer require --dev progressplanner/seographcs:2.0.0
 ```
 
 Reference the installed standard from the consuming repository's ruleset:

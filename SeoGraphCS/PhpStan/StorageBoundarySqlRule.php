@@ -141,7 +141,7 @@ final class StorageBoundarySqlRule implements Rule {
 			RuleErrorBuilder::message(
 				'Direct SQL through the wpdb global (or an alias of it) is restricted to the storage layer boundary.'
 			)
-				->identifier( 'seograph.directSqlOutsideStorage' )
+				->identifier( 'verso.directSqlOutsideStorage' )
 				->build(),
 		];
 	}

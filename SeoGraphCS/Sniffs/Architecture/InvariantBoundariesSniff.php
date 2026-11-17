@@ -1,6 +1,6 @@
 <?php
 /**
- * Enforces SEO Graph architecture invariants.
+ * Enforces Verso architecture invariants.
  *
  * @package SeoGraphCS
  */
@@ -69,7 +69,7 @@ class InvariantBoundariesSniff implements Sniff {
 	/**
 	 * Native WP-Cron scheduling functions forbidden in runtime code.
 	 *
-	 * Action Scheduler owns every SEO Graph background job. Inspection and
+	 * Action Scheduler owns every Verso background job. Inspection and
 	 * cleanup APIs remain allowed because they do not create background work.
 	 *
 	 * @var array<string, true>
@@ -506,7 +506,7 @@ class InvariantBoundariesSniff implements Sniff {
 
 		if ( $is_true_like && ! $allows_true ) {
 			$phpcs_file->addError(
-				'Plugin options must not autoload; only seograph_flags may use autoload=true.',
+				'Plugin options must not autoload; only verso_flags may use autoload=true.',
 				$autoload['ptr'],
 				'AutoloadedOption'
 			);
@@ -515,7 +515,7 @@ class InvariantBoundariesSniff implements Sniff {
 
 		if ( $is_owned && null === $autoload ) {
 			$phpcs_file->addError(
-				'Plugin-owned options must pass an explicit autoload value; use false unless writing seograph_flags.',
+				'Plugin-owned options must pass an explicit autoload value; use false unless writing verso_flags.',
 				$ptr,
 				'AutoloadedOption'
 			);
@@ -539,16 +539,16 @@ class InvariantBoundariesSniff implements Sniff {
 
 		if ( ! $this->is_redirect_service_path( $filename ) ) {
 			$phpcs_file->addError(
-				'Redirects must go through the redirect service so the SEO Graph trace header is always present.',
+				'Redirects must go through the redirect service so the Verso trace header is always present.',
 				$ptr,
 				'RedirectOutsideService'
 			);
 			return;
 		}
 
-		if ( null === $x_redirect || ! str_contains( $x_redirect['raw'], 'seo-graph; rule=' ) ) {
+		if ( null === $x_redirect || ! str_contains( $x_redirect['raw'], 'verso; rule=' ) ) {
 			$phpcs_file->addError(
-				'Redirect service calls must pass X-Redirect-By with the "seo-graph; rule=" trace value.',
+				'Redirect service calls must pass X-Redirect-By with the "verso; rule=" trace value.',
 				null !== $x_redirect ? $x_redirect['ptr'] : $ptr,
 				'RedirectTraceHeader'
 			);
@@ -1181,7 +1181,7 @@ class InvariantBoundariesSniff implements Sniff {
 	private function is_plugin_owned_option_expression( string $expression ): bool {
 		$value = $this->string_literal_value( $expression );
 
-		if ( null !== $value && str_starts_with( $value, 'seograph_' ) ) {
+		if ( null !== $value && str_starts_with( $value, 'verso_' ) ) {
 			return true;
 		}
 
@@ -1198,7 +1198,7 @@ class InvariantBoundariesSniff implements Sniff {
 	private function is_flags_option_expression( string $expression ): bool {
 		$value = $this->string_literal_value( $expression );
 
-		if ( 'seograph_flags' === $value ) {
+		if ( 'verso_flags' === $value ) {
 			return true;
 		}
 

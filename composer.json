@@ -1,6 +1,6 @@
 {
 	"name": "progressplanner/seographcs",
-	"description": "The reusable PHP_CodeSniffer standard for SEO Graph projects.",
+	"description": "The reusable PHP_CodeSniffer standard for Verso projects.",
 	"license": "GPL-2.0-or-later",
 	"type": "phpcodesniffer-standard",
 	"require": {
